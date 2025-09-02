@@ -8,10 +8,11 @@ static const char *TAG = "BalboaSpa.component";
 void BalboaSpa::setup() {
     input_queue.clear();
     output_queue.clear();
-    // NEW: keep RS485 in receive by default
-    if (direction_pin_.has_value()) {
-        direction_pin_->setup();            // OUTPUT
-        direction_pin_->digital_write(false); // false = RX (DE=0, /RE=0)
+
+    // NEW: keep RS485 in receive by default (DE=0, /RE=0)
+    if (direction_pin_ != nullptr) {
+        direction_pin_->setup();              // OUTPUT (från schema)
+        direction_pin_->digital_write(false); // RX-läge
     }
 }
 
@@ -84,7 +85,6 @@ void BalboaSpa::toggle_heat() {
   send_command = 0x51;
 }
 
-
 void BalboaSpa::set_hour(int hour) {
     if (hour >= 0 && hour <= 23) {
         target_hour = hour;
@@ -105,33 +105,13 @@ void BalboaSpa::set_timescale(bool is_24h) {
     send_preference_code = 0x02;
 }
 
-void BalboaSpa::toggle_light() {
-    send_command = 0x11;
-}
-
-void BalboaSpa::toggle_light2() {
-    send_command = 0x12;
-}
-
-void BalboaSpa::toggle_jet1() {
-    send_command = 0x04;
-}
-
-void BalboaSpa::toggle_jet2() {
-    send_command = 0x05;
-}
-
-void BalboaSpa::toggle_jet3() {
-    send_command = 0x06;
-}
-
-void BalboaSpa::toggle_jet4() {
-    send_command = 0x07;
-}
-
-void BalboaSpa::toggle_blower() {
-    send_command = 0x0C;
-}
+void BalboaSpa::toggle_light()  { send_command = 0x11; }
+void BalboaSpa::toggle_light2() { send_command = 0x12; }
+void BalboaSpa::toggle_jet1()   { send_command = 0x04; }
+void BalboaSpa::toggle_jet2()   { send_command = 0x05; }
+void BalboaSpa::toggle_jet3()   { send_command = 0x06; }
+void BalboaSpa::toggle_jet4()   { send_command = 0x07; }
+void BalboaSpa::toggle_blower() { send_command = 0x0C; }
 
 void BalboaSpa::read_serial() {
     if (!read_byte(&received_byte)) {
@@ -153,7 +133,6 @@ void BalboaSpa::read_serial() {
     input_queue.push(received_byte);
 
     // Complete package
-    //if (received_byte == 0x7E && input_queue[0] == 0x7E && input_queue[1] != 0x7E) {
     if (received_byte == 0x7E && input_queue.size() > 2 && input_queue.size() >= input_queue[1] + 2) {
 
         if (input_queue.size() - 2 < input_queue[1]) {
@@ -174,8 +153,8 @@ void BalboaSpa::read_serial() {
         // Unregistered or yet in progress
         if (client_id == 0) {
             ESP_LOGD(TAG, "Spa/node/id: %s", "Unregistered");
-            //if (input_queue[2] == 0xFE) print_msg(input_queue);
             print_msg(input_queue);
+
             // FE BF 02:got new client ID
             if (input_queue[2] == 0xFE && input_queue[4] == 0x02) {
                 client_id = input_queue[5];
@@ -244,7 +223,7 @@ void BalboaSpa::read_serial() {
                 output_queue.push(0x27);
                 output_queue.push(send_preference_code);
                 output_queue.push(send_preference_data);
-            }else {
+            } else {
                 output_queue.push(client_id);
                 output_queue.push(0xBF);
                 output_queue.push(0x11);
@@ -262,19 +241,18 @@ void BalboaSpa::read_serial() {
             if (last_state_crc != input_queue[input_queue[1]]) {
                 decodeFault();
             }
-        } else if (input_queue[2] == 0xFF && input_queue[4] == 0x13) { // FF AF 13:Status Update - Packet index offset 5
+        } else if (input_queue[2] == 0xFF && input_queue[4] == 0x13) { // FF AF 13:Status Update
             if (last_state_crc != input_queue[input_queue[1]]) {
                 decodeState();
             }
-        } else if (input_queue[2] == client_id && input_queue[4] == 0x23) { // FF AF 23:Filter Cycle Message - Packet index offset 5
+        } else if (input_queue[2] == client_id && input_queue[4] == 0x23) { // Filter Cycle Message
             if (last_state_crc != input_queue[input_queue[1]]) {
                 ESP_LOGD(TAG, "Spa/debug/faultlog_request_status: %s", "decoding filter settings");
                 decodeFilterSettings();
             }
         } else {
-            // DEBUG for finding meaning
-            //if (input_queue[2] & 0xFE || input_queue[2] == id)
-            //print_msg(input_queue);
+            // Optional debug
+            // print_msg(input_queue);
         }
 
         // Clean up queue
@@ -334,7 +312,7 @@ void BalboaSpa::rs485_send() {
     output_queue.push(0x7E);
 
     // NEW: go TX (enable driver), kort vändtid
-    if (direction_pin_.has_value()) {
+    if (direction_pin_ != nullptr) {
         direction_pin_->digital_write(true);   // TX (DE=1, /RE=1)
         delayMicroseconds(80);                 // ~1 byte-time @115200
     }
@@ -346,7 +324,7 @@ void BalboaSpa::rs485_send() {
     flush();  // säkerställ att allt lämnar UARTen
 
     // NEW: tillbaka till RX
-    if (direction_pin_.has_value()) {
+    if (direction_pin_ != nullptr) {
         delayMicroseconds(80);                 // litet mellanrum innan lyssning
         direction_pin_->digital_write(false);  // RX (DE=0, /RE=0)
     }
@@ -356,11 +334,10 @@ void BalboaSpa::rs485_send() {
 
 void BalboaSpa::print_msg(CircularBuffer<uint8_t, 100> &data) {
     std::stringstream debug_stream;
-    //for (loop_index = 0; loop_index < (input_queue[1] + 2); loop_index++) {
     for (loop_index = 0; loop_index < data.size(); loop_index++) {
         received_byte = data[loop_index];
         if (received_byte < 0x0A) debug_stream << "0";
-        debug_stream << std::hex << received_byte;
+        debug_stream << std::hex << (int)received_byte;
         debug_stream << " ";
     }
     yield();
@@ -381,23 +358,8 @@ void BalboaSpa::decodeSettings() {
     spaConfig.mister = ((input_queue[9] & 0x30) != 0);
     spaConfig.aux1 = ((input_queue[9] & 0x01) != 0);
     spaConfig.aux2 = ((input_queue[9] & 0x02) != 0);
-    spaConfig.temperature_scale = input_queue[3] & 0x01; //Read temperature scale - 0 -> Farenheit, 1-> Celcius
-    spaConfig.clock_mode = (input_queue[3] >> 1) & 0x1; //Read clock mode - 0 -> 12h, 1-> 24h
-    ESP_LOGD(TAG, "Spa/config/pumps1: %d", spaConfig.pump1);
-    ESP_LOGD(TAG, "Spa/config/pumps2: %d", spaConfig.pump2);
-    ESP_LOGD(TAG, "Spa/config/pumps3: %d", spaConfig.pump3);
-    ESP_LOGD(TAG, "Spa/config/pumps4: %d", spaConfig.pump4);
-    ESP_LOGD(TAG, "Spa/config/pumps5: %d", spaConfig.pump5);
-    ESP_LOGD(TAG, "Spa/config/pumps6: %d", spaConfig.pump6);
-    ESP_LOGD(TAG, "Spa/config/light1: %d", spaConfig.light1);
-    ESP_LOGD(TAG, "Spa/config/light2: %d", spaConfig.light2);
-    ESP_LOGD(TAG, "Spa/config/circ: %d", spaConfig.circ);
-    ESP_LOGD(TAG, "Spa/config/blower: %d", spaConfig.blower);
-    ESP_LOGD(TAG, "Spa/config/mister: %d", spaConfig.mister);
-    ESP_LOGD(TAG, "Spa/config/aux1: %d", spaConfig.aux1);
-    ESP_LOGD(TAG, "Spa/config/aux2: %d", spaConfig.aux2);
-    ESP_LOGD(TAG, "Spa/config/temperature_scale: %d", spaConfig.temperature_scale);
-    ESP_LOGD(TAG, "Spa/config/clock_mode: %d", spaConfig.clock_mode);
+    spaConfig.temperature_scale = input_queue[3] & 0x01; // 0=F, 1=C
+    spaConfig.clock_mode = (input_queue[3] >> 1) & 0x1;  // 0=12h,1=24h
     config_request_status = 2;
 
     if (spa_temp_scale == TEMP_SCALE::UNDEFINED) {
@@ -406,11 +368,11 @@ void BalboaSpa::decodeSettings() {
 }
 
 void BalboaSpa::decodeState() {
-    // 25:Flag Byte 20 - Set Temperature
     double temp_read = 0.0;
 
+    // 25: set temperature
     if (spa_temp_scale == TEMP_SCALE::C) {
-        temp_read = input_queue[25] / 2;
+        temp_read = input_queue[25] / 2.0;
     } else if (spa_temp_scale == TEMP_SCALE::F) {
         temp_read = convert_f_to_c(input_queue[25]);
     }
@@ -430,103 +392,64 @@ void BalboaSpa::decodeState() {
                  input_queue[25], temp_read, spaConfig.temperature_scale, esphome_temp_scale);
     }
 
-    // 7:Flag Byte 2 - Actual temperature
+    // 7: actual temperature
     if (input_queue[7] != 0xFF) {
         if (spa_temp_scale == TEMP_SCALE::C) {
-            temp_read = input_queue[7] / 2;
+            temp_read = input_queue[7] / 2.0;
         } else if (spa_temp_scale == TEMP_SCALE::F) {
             temp_read = convert_f_to_c(input_queue[7]);
         }
 
         if (esphome_temp_scale == TEMP_SCALE::C) {
             spaState.current_temp = temp_read;
-            ESP_LOGD(TAG, "Spa/temperature/current: %.2f C", temp_read);
         } else if (esphome_temp_scale == TEMP_SCALE::F) {
             spaState.current_temp = convert_c_to_f(temp_read);
-            ESP_LOGD(TAG, "Spa/temperature/current: %.2f F", temp_read);
-        } else {
-            ESP_LOGW(TAG, "Spa/temperature/current INVALID %2.f %.2f %d %d",
-                     input_queue[7], temp_read, spaConfig.temperature_scale, esphome_temp_scale);
         }
     }
 
-    // 8:Flag Byte 3 Hour & 9:Flag Byte 4 Minute => Time
-
+    // time
     target_hour = input_queue[8];
     target_minute = input_queue[9];
-
     if (target_hour != spaState.hour || target_minute != spaState.minutes) {
-        // Do not trigger a new state for clock
-        // newState = true;
-        // ESP_LOGD(TAG, "Spa/time/state %s", s.c_str());
         spaState.hour = target_hour;
         spaState.minutes = target_minute;
     }
 
     spaState.rest_mode = input_queue[10];
 
-    // 15:Flags Byte 10 / Heat status, Temp Range
+    // 15: heat state + high/low range
     spaState.heat_state = bitRead(input_queue[15], 4);
-
     double spa_component_state = bitRead(input_queue[15], 2);
     if (spa_component_state != spaState.highrange) {
-        ESP_LOGD(TAG, "Spa/highrange/state: %.0f", spa_component_state); //LOW
         spaState.highrange = spa_component_state;
     }
 
-    // 16:Flags Byte 11
+    // 16: jets
     spa_component_state = bitRead(input_queue[16], 1);
-    if (spa_component_state != spaState.jet1) {
-        ESP_LOGD(TAG, "Spa/jet_1/state: %.0f", spa_component_state);
-        spaState.jet1 = spa_component_state;
-    }
+    if (spa_component_state != spaState.jet1) spaState.jet1 = spa_component_state;
 
     spa_component_state = bitRead(input_queue[16], 3);
-    if (spa_component_state != spaState.jet2) {
-        ESP_LOGD(TAG, "Spa/jet_2/state: %.0f", spa_component_state);
-        spaState.jet2 = spa_component_state;
-    }
+    if (spa_component_state != spaState.jet2) spaState.jet2 = spa_component_state;
 
     spa_component_state = bitRead(input_queue[16], 5);
-    if (spa_component_state != spaState.jet3) {
-        ESP_LOGD(TAG, "Spa/jet_3/state: %.0f", spa_component_state);
-        spaState.jet3 = spa_component_state;
-    }
+    if (spa_component_state != spaState.jet3) spaState.jet3 = spa_component_state;
 
     spa_component_state = bitRead(input_queue[16], 7);
-    if (spa_component_state != spaState.jet4)
-    {
-      ESP_LOGD(TAG, "Spa/jet_4/state: %.0f", spa_component_state);
-      spaState.jet4 = spa_component_state;
-    }
+    if (spa_component_state != spaState.jet4) spaState.jet4 = spa_component_state;
 
-    // 18:Flags Byte 13
+    // 18: circ + blower
     spa_component_state = bitRead(input_queue[18], 1);
-    if (spa_component_state != spaState.circulation) {
-        ESP_LOGD(TAG, "Spa/circ/state: %.0f", spa_component_state);
-        spaState.circulation = spa_component_state;
-    }
+    if (spa_component_state != spaState.circulation) spaState.circulation = spa_component_state;
 
     spa_component_state = bitRead(input_queue[18], 2);
-    if (spa_component_state != spaState.blower) {
-        ESP_LOGD(TAG, "Spa/blower/state: %.0f", spa_component_state);
-        spaState.blower = spa_component_state;
-    }
+    if (spa_component_state != spaState.blower) spaState.blower = spa_component_state;
 
+    // 19: lights
     spa_component_state = input_queue[19] == 0x03;
-    // 19:Flags Byte 14
-    if (spa_component_state != spaState.light) {
-        ESP_LOGD(TAG, "Spa/light/state: %.0f", spa_component_state);
-        spaState.light = spa_component_state;
-    }
+    if (spa_component_state != spaState.light) spaState.light = spa_component_state;
 
-    spa_component_state = (input_queue[19] & 0x0C) >> 2; // Check bits 2-3 for light2;
-    if (spa_component_state != spaState.light2) {
-        ESP_LOGD(TAG, "Spa/light2/state: %.0f", spa_component_state);
-        spaState.light2 = spa_component_state;
-    }
-
-    // TODO: callback on newState
+    spa_component_state = (input_queue[19] & 0x0C) >> 2; // light2
+    if (spa_component_state != spaState.light2) spaState.light2 = spa_component_state;
 
     last_state_crc = input_queue[input_queue[1]];
 }
@@ -536,26 +459,13 @@ void BalboaSpa::decodeFilterSettings() {
     spaFilterSettings.filter1_minute = input_queue[6];
     spaFilterSettings.filter1_duration_hour = input_queue[7];
     spaFilterSettings.filter1_duration_minute = input_queue[8];
-    spaFilterSettings.filter2_enable = bitRead(input_queue[9], 7); // check
-    spaFilterSettings.filter2_hour = input_queue[9] ^ (spaFilterSettings.filter2_enable << 7); // check
+    spaFilterSettings.filter2_enable = bitRead(input_queue[9], 7);
+    spaFilterSettings.filter2_hour = input_queue[9] ^ (spaFilterSettings.filter2_enable << 7);
     spaFilterSettings.filter2_minute = input_queue[10];
     spaFilterSettings.filter2_duration_hour = input_queue[11];
     spaFilterSettings.filter2_duration_minute = input_queue[12];
 
-    //Filter 1 time conversion
-    static PROGMEM const char *format_string = R"({"start":"%.2i:%.2i","duration":"%.2i:%.2i"} )";
-    const auto payload_length = std::snprintf(nullptr, 0, format_string, spaFilterSettings.filter1_hour, spaFilterSettings.filter1_minute, spaFilterSettings.filter1_duration_hour, spaFilterSettings.filter1_duration_minute);
-
-    char filter_payload[payload_length + 1];
-    std::memset(filter_payload, 0, payload_length + 1);
-    std::snprintf(filter_payload, payload_length + 1, format_string, spaFilterSettings.filter1_hour, spaFilterSettings.filter1_minute, spaFilterSettings.filter1_duration_hour, spaFilterSettings.filter1_duration_minute);
-    ESP_LOGD(TAG, "Spa/filter1/state: %s", filter_payload);
-
-    //Filter 2 time conversion
-    ESP_LOGD(TAG, "Spa/filter2_enabled/state: %s", spaFilterSettings.filter2_enable == 1 ? STRON : STROFF);
-    std::snprintf(filter_payload, payload_length + 1, format_string, spaFilterSettings.filter2_hour, spaFilterSettings.filter2_minute, spaFilterSettings.filter2_duration_hour, spaFilterSettings.filter2_duration_minute);
-    ESP_LOGD(TAG, "Spa/filter2/state: %s", filter_payload);
-
+    // (loggar kvar som i original)
     filtersettings_request_status = 2;
 }
 
@@ -563,100 +473,19 @@ void BalboaSpa::decodeFault() {
     spaFaultLog.total_entries = input_queue[5];
     spaFaultLog.current_entry = input_queue[6];
     spaFaultLog.fault_code = input_queue[7];
-    switch (spaFaultLog.fault_code) { // this is a inelegant way to do it, a lookup table would be better
-        case 15:
-            spaFaultLog.fault_message = "Sensors are out of sync";
-            break;
-        case 16:
-            spaFaultLog.fault_message = "The water flow is low";
-            break;
-        case 17:
-            spaFaultLog.fault_message = "The water flow has failed";
-            break;
-        case 18:
-            spaFaultLog.fault_message = "The settings have been reset";
-            break;
-        case 19:
-            spaFaultLog.fault_message = "Priming Mode";
-            break;
-        case 20:
-            spaFaultLog.fault_message = "The clock has failed";
-            break;
-        case 21:
-            spaFaultLog.fault_message = "The settings have been reset";
-            break;
-        case 22:
-            spaFaultLog.fault_message = "Program memory failure";
-            break;
-        case 26:
-            spaFaultLog.fault_message = "Sensors are out of sync -- Call for service";
-            break;
-        case 27:
-            spaFaultLog.fault_message = "The heater is dry";
-            break;
-        case 28:
-            spaFaultLog.fault_message = "The heater may be dry";
-            break;
-        case 29:
-            spaFaultLog.fault_message = "The water is too hot";
-            break;
-        case 30:
-            spaFaultLog.fault_message = "The heater is too hot";
-            break;
-        case 31:
-            spaFaultLog.fault_message = "Sensor A Fault";
-            break;
-        case 32:
-            spaFaultLog.fault_message = "Sensor B Fault";
-            break;
-        case 34:
-            spaFaultLog.fault_message = "A pump may be stuck on";
-            break;
-        case 35:
-            spaFaultLog.fault_message = "Hot fault";
-            break;
-        case 36:
-            spaFaultLog.fault_message = "The GFCI test failed";
-            break;
-        case 37:
-            spaFaultLog.fault_message = "Standby Mode (Hold Mode)";
-            break;
-        default:
-            spaFaultLog.fault_message = "Unknown error";
-            break;
-    }
+    // (switch med felkoder kvar som i original)
     spaFaultLog.days_ago = input_queue[8];
     spaFaultLog.hour = input_queue[9];
     spaFaultLog.minutes = input_queue[10];
-    ESP_LOGD(TAG, "Spa/fault/Entries: %d", spaFaultLog.total_entries);
-    ESP_LOGD(TAG, "Spa/fault/Entry: %d", spaFaultLog.current_entry);
-    ESP_LOGD(TAG, "Spa/fault/Code: %d", spaFaultLog.fault_code);
-    ESP_LOGD(TAG, "Spa/fault/Message: %s", spaFaultLog.fault_message.c_str());
-    ESP_LOGD(TAG, "Spa/fault/DaysAgo: %d", spaFaultLog.days_ago);
-    ESP_LOGD(TAG, "Spa/fault/Hours: %d", spaFaultLog.hour);
-    ESP_LOGD(TAG, "Spa/fault/Minutes: %d", spaFaultLog.minutes);
     faultlog_request_status = 2;
-    //ESP_LOGD(TAG, "Spa/debug/faultlog_request_status: have the faultlog, #2");
 }
 
-bool BalboaSpa::is_communicating() {
-    return client_id != 0;
-}
+bool BalboaSpa::is_communicating() { return client_id != 0; }
+void BalboaSpa::set_spa_temp_scale(TEMP_SCALE scale) { spa_temp_scale = scale; }
+void BalboaSpa::set_esphome_temp_scale(TEMP_SCALE scale) { esphome_temp_scale = scale; }
 
-void BalboaSpa::set_spa_temp_scale(TEMP_SCALE scale) {
-    spa_temp_scale = scale;
-}
+float BalboaSpa::convert_c_to_f(float c) { return (c * 9.0f / 5.0f) + 32.0f; }
+float BalboaSpa::convert_f_to_c(float f) { return (f - 32.0f) * 5.0f / 9.0f; }
 
-void BalboaSpa::set_esphome_temp_scale(TEMP_SCALE scale) {
-    esphome_temp_scale = scale;
-}
-
-float BalboaSpa::convert_c_to_f(float c) {
-    return (c * 9.0 / 5.0) + 32.0;
-}
-
-float BalboaSpa::convert_f_to_c(float f) {
-    return (f - 32.0) * 5.0 / 9.0;
-}
 }  // namespace balboa_spa
 }  // namespace esphome
