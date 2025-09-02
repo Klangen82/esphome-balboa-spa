@@ -1,82 +1,51 @@
-esphome:
-  name: balboa-spa
-  friendly_name: Balboa Spa
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome.components import uart
+from esphome.const import CONF_ID
+from esphome import pins
 
-esp32:
-  board: esp32-s3-devkitc-1
-  framework:
-    type: esp-idf
+DEPENDENCIES = ["uart"]
 
-logger:
-  baud_rate: 0  # inga logs på HW-UART
+CONF_SPA_ID = "balboa_spa_id"
+CONF_SPA_TEMP_SCALE = "spa_temp_scale"
+CONF_ESPHOME_TEMP_SCALE = "esphome_temp_scale"
+CONF_DIRECTION_PIN = "direction_pin"
 
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  ap:
-    ssid: "Balboa-Spa Fallback"
-    password: "QmVJAdTQzZvp"
+balboa_spa_ns = cg.esphome_ns.namespace("balboa_spa")
+BalboaSpa = balboa_spa_ns.class_("BalboaSpa", cg.Component, uart.UARTDevice)
 
-api:
-  encryption:
-    key: "kH1yCrws6jbWSffQPqVN6BN4fUAHREWDZoJL9wPAOd0="
-ota:
-  - platform: esphome
-    password: "a0bdec74b585e596bea1ca1ddb3fa12b"
+TEMP_SCALE = balboa_spa_ns.enum("TEMP_SCALE")
+TEMP_SCALES = {
+    254: TEMP_SCALE.UNDEFINED,
+    "F": TEMP_SCALE.F,
+    "C": TEMP_SCALE.C,
+}
 
-# Använder din lokala custom_component (ingen external_components behövs!)
+CONFIG_SCHEMA = (
+    cv.Schema(
+        {
+            cv.GenerateID(): cv.declare_id(BalboaSpa),
+            cv.Optional(CONF_SPA_TEMP_SCALE, default=254): cv.enum(TEMP_SCALES, upper=True),
+            cv.Optional(CONF_ESPHOME_TEMP_SCALE, default="C"): cv.enum(TEMP_SCALES, upper=True),
+            cv.Optional(CONF_DIRECTION_PIN): pins.gpio_output_pin_schema,
+        }
+    )
+    .extend(cv.COMPONENT_SCHEMA)
+    .extend(uart.UART_DEVICE_SCHEMA)
+)
 
-uart:
-  id: spa_uart_bus
-  tx_pin: GPIO17
-  rx_pin: GPIO16
-  baud_rate: 115200
-  parity: NONE
-  stop_bits: 1
-  rx_buffer_size: 128
+def to_code(config):
+    var = cg.new_Pvariable(config[CONF_ID])
+    yield cg.register_component(var, config)
 
-balboa_spa:
-  id: spa
-  spa_temp_scale: C
-  direction_pin: GPIO14   # DE + /RE ihop till denna pin
+    if (spa_temp_scale_conf := config.get(CONF_SPA_TEMP_SCALE)) is not None:
+        cg.add(var.set_spa_temp_scale(spa_temp_scale_conf))
 
-switch:
-  - platform: balboa_spa
-    balboa_spa_id: spa
-    jet1:
-      name: "Jet 1"
-    jet2:
-      name: "Jet 2"
-    jet3:
-      name: "Jet 3"
-    jet4:
-      name: "Jet 4"
-    light:
-      name: "Spa Light"
-    blower:
-      name: "Blower"
+    if (esphome_temp_scale_conf := config.get(CONF_ESPHOME_TEMP_SCALE)) is not None:
+        cg.add(var.set_esphome_temp_scale(esphome_temp_scale_conf))
 
-climate:
-  - platform: balboa_spa
-    balboa_spa_id: spa
-    name: "Spa Thermostat"
-    visual:
-      min_temperature: 7 °C
-      max_temperature: 40 °C
-      temperature_step: 0.5 °C
+    if CONF_DIRECTION_PIN in config:
+        pin = yield cg.gpio_pin_expression(config[CONF_DIRECTION_PIN])
+        cg.add(var.set_direction_pin(pin))
 
-binary_sensor:
-  - platform: balboa_spa
-    balboa_spa_id: spa
-    blower:
-      name: "Blower"
-    highrange:
-      name: "High Range"
-    circulation:
-      name: "Circulation Pump"
-    restmode:
-      name: "Rest Mode"
-    heatstate:
-      name: "Heat State"
-    connected:
-      name: "Balboa Connected"
+    yield uart.register_uart_device(var, config)
