@@ -3,6 +3,7 @@
 #include "esphome/core/component.h"
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/log.h"
+#include "esphome/core/gpio.h"
 
 #include "spa_types.h"
 #include "spa_config.h"
@@ -11,6 +12,7 @@
 #include <string>
 #include <iostream>
 #include <sstream>
+
 
 namespace esphome {
 namespace balboa_spa {
@@ -41,6 +43,10 @@ class BalboaSpa : public uart::UARTDevice, public PollingComponent {
     void setup() override;
     void update() override;
     float get_setup_priority() const override;
+
+    // --- NEW: RS485 direction control (DE & /RE ihop) ---
+    optional<InternalGPIOPin> direction_pin_;
+    void set_direction_pin(InternalGPIOPin pin) { direction_pin_ = pin; }
 
     SpaConfig get_current_config();
     SpaState* get_current_state();

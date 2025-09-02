@@ -8,6 +8,11 @@ static const char *TAG = "BalboaSpa.component";
 void BalboaSpa::setup() {
     input_queue.clear();
     output_queue.clear();
+    // NEW: keep RS485 in receive by default
+    if (direction_pin_.has_value()) {
+        direction_pin_->setup();            // OUTPUT
+        direction_pin_->digital_write(false); // false = RX (DE=0, /RE=0)
+    }
 }
 
 void BalboaSpa::update() {
@@ -328,15 +333,24 @@ void BalboaSpa::rs485_send() {
     output_queue.unshift(0x7E);
     output_queue.push(0x7E);
 
+    // NEW: go TX (enable driver), kort vändtid
+    if (direction_pin_.has_value()) {
+        direction_pin_->digital_write(true);   // TX (DE=1, /RE=1)
+        delayMicroseconds(80);                 // ~1 byte-time @115200
+    }
+
     for (loop_index = 0; loop_index < output_queue.size(); loop_index++) {
         write(output_queue[loop_index]);
     }
 
-    //print_msg(output_queue);
+    flush();  // säkerställ att allt lämnar UARTen
 
-    flush();
+    // NEW: tillbaka till RX
+    if (direction_pin_.has_value()) {
+        delayMicroseconds(80);                 // litet mellanrum innan lyssning
+        direction_pin_->digital_write(false);  // RX (DE=0, /RE=0)
+    }
 
-    // DEBUG: print_msg(output_queue);
     output_queue.clear();
 }
 
